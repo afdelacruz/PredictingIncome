@@ -1,0 +1,31 @@
+---
+title: "FINAL"
+author: "Andrew Dela Cruz"
+date: "12/5/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dummies)
+```
+
+```{r}
+df = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data")
+names = c("age", "WorkClass", "FNLWGT", "Education", "Education-num", "MartialStatus", "Occupation",
+          "Relationship", "Race", "Sex", "Capital-Gain", "Capital-Loss", "Hours/Week", 
+          "NativeCountry", "Salary")
+colnames(df) = names
+which(complete.cases(data) == FALSE)
+df
+```
+DATA TODO LIST:
+-Load data in 
+-Create Column names 
+-Check for complete samples
+-Check for outliers
+-Create dummy variables
+-Correlations
+-Plots
+-Summary Stats
