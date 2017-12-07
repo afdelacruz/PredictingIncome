@@ -49,7 +49,7 @@ summary(AllData)
 No missing values 
 
 ```{r}
-ColClasses = sapply(master.df, class)
+ColClasses = sapply(AllData, class)
 numerics = ColClasses == "integer"
 
 AllData[,numerics] = scale(AllData[,numerics])
@@ -76,8 +76,13 @@ useful = c('age', 'WorkClass', 'EducationNum', 'Race', 'Sex', 'CapitalGain', 'Sa
 set.seed(2)
 AllData$NativeCountry = NULL
 AllData$EducationNum = NULL
-train = AllData[1:nrow(raw_data),]
-test = AllData[(nrow(raw_data)+1):nrow(AllData),]
+Data = AllData[1:nrow(raw_data),]
+Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
+
+
+trainIndex = sample(nrow(Data),0.8*nrow(Data) )
+train = Data[trainIndex,]
+test = Data[-trainIndex,]
 
 tree.Salary = tree(Salary~., train)
 Salary.predict = predict(tree.Salary, train, type = 'class')
