@@ -9,23 +9,101 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(dummies)
+library(randomForest)
+library(tree)
+library(caret)
+library(GGally)
+library(rpart)
+library(stringr)
 ```
 
-```{r}
-df = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data")
-names = c("age", "WorkClass", "FNLWGT", "Education", "Education-num", "MartialStatus", "Occupation",
-          "Relationship", "Race", "Sex", "Capital-Gain", "Capital-Loss", "Hours/Week", 
-          "NativeCountry", "Salary")
-colnames(df) = names
-which(complete.cases(data) == FALSE)
-df
-```
-DATA TODO LIST:
+DATA PREPROCESSING TODO LIST:
 -Load data in 
--Create Column names 
+-Create column names 
+-Convert everything to correct data types (factors, numeric)
 -Check for complete samples
 -Check for outliers
 -Create dummy variables
 -Correlations
 -Plots
 -Summary Stats
+
+```{r}
+raw_data = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+                sep = ',')
+column_names = c("age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MartialStatus", "Occupation",
+          "Relationship", "Race", "Sex", "CapitalGain", "CapitalLoss", "HoursWeek", 
+          "NativeCountry", "Salary")
+
+test_set = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test",
+                      sep = ',', skip = 1)
+
+test_set$V15 = str_replace(test_set$V15, "\\.", "")
+test_set$V15
+AllData = rbind(raw_data, test_set)
+colnames(AllData) = column_names
+which(complete.cases(AllData) == FALSE)
+summary(AllData)
+
+```
+No missing values 
+
+```{r}
+ColClasses = sapply(master.df, class)
+numerics = ColClasses == "integer"
+
+AllData[,numerics] = scale(AllData[,numerics])
+AllData[,numerics]
+sapply(AllData[,numerics], sd)
+```
+Numeric columns of data is now mean-centered and scaled
+
+Since we are using trees, it is unneccessary to create dummy variables. Also, each factor has several levels so we did not want our matrix to become too large. 
+
+
+```{r}
+summary(AllData)
+```
+Age, WorkingClass, Education-Years, Race, Sex, Capital Gain, Salary
+```{r}
+useful = c('age', 'WorkClass', 'EducationNum', 'Race', 'Sex', 'CapitalGain', 'Salary')
+#ggpairs(master.df[,useful])
+
+```
+
+#Classification Tree
+```{r}
+set.seed(2)
+AllData$NativeCountry = NULL
+AllData$EducationNum = NULL
+train = AllData[1:nrow(raw_data),]
+test = AllData[(nrow(raw_data)+1):nrow(AllData),]
+
+tree.Salary = tree(Salary~., train)
+Salary.predict = predict(tree.Salary, train, type = 'class')
+confusionMatrix(Salary.predict, train$Salary)
+```
+
+```{r}
+set.seed(3)
+class(tree.Salary)
+cv.Salary = cv.tree(tree.Salary, FUN = prune.misclass)
+names(cv.Salary)
+par(mfrow = c(1,2))
+plot(cv.Salary$size, cv.Salary$dev, type = 'b')
+plot(cv.Salary$k, cv.Salary$dev, type = 'b')
+```
+```{r}
+prune.8 = prune.misclass(tree.Salary, best = 8)
+prune.5 = prune.misclass(tree.Salary, best = 5)
+
+tree.pred8 = predict(prune.8,test, type = 'class')
+tree.pred5 = predict(prune.5,test, type = 'class')
+confusionMatrix(tree.pred8,test$Salary)
+confusionMatrix(tree.pred5,test$Salary)
+summary(prune.5)
+```
+
+```{r}
+better = rpart(Salary ~., AllData)
+```
