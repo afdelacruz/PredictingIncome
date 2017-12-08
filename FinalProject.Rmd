@@ -142,7 +142,7 @@ library(randomForest)
 p = ncol(Train)-1
 #bag.Salary = bagging(Salary ~., data = Train)
 #plot(bag.Salary)
-bag.Salary = randomForest(Salary~., data = Train, mtry = p, importance = TRUE)
+bag.Salary = randomForest(Salary~., data = Train, mtry = p, importance = TRUE, ntree = 500)
 posteriors.Bagged = predict(bag.Salary, newdata = test, type = 'prob')
 predic.Bagged = predict(bag.Salary, newdata = test, type = 'class')
 Conf.Bagged = confusionMatrix(test$Salary, predic.Bagged)
@@ -162,9 +162,11 @@ varImpPlot(bag.Salary)
 library(ROCR)
 rfModel = tuneRF(Train[,-ncol(Train)], Train[,ncol(Train)], 
                  stepFactor=1.5,
-                 doBest = TRUE=
+                 doBest = TRUE,
                  improve=1e-5, 
                  ntree = 500)
+
+summary(rfModel)
 posteriors.rf = predict(rfModel, test, type = 'prob')
 predic.rf = predict(rfModel, newdata = test)
 Conf.rf = confusionMatrix(test$Salary, predic.rf)
@@ -176,10 +178,12 @@ plot(ROC.rf)
 abline(a = 0, b = 1 , lty = 2)
 auc.rf = performance(preds.rf, measure = 'auc')
 auc.rf@y.values
+importance(rfModel)
+varImpPlot(rfModel)
 
 ```
 
-###Tune RF
+###Tune RF with Caret but takes awhile
 ```{r}
 control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
 set.seed(2)
@@ -187,4 +191,47 @@ mtry <- sqrt(ncol(Train[,1:ncol(Train)]))
 rf_random <- train(Salary~., data=Train, method="rf", metric="Accuracy", tuneLength=5, trControl=control)
 print(rf_random)
 plot(rf_random)
+```
+
+
+###Showing all models on Validation Set
+```{r}
+posteriors.Validate = predict(rpartTune, Validation, type = 'prob')
+predic.Validate = predict(rfModel, newdata = Validation)
+Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
+Conf.Validate
+df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
+preds.Validate = prediction(df.Validate[,1], df.Validate[,2])
+ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
+plot(ROC.Validate)
+abline(a = 0, b = 1 , lty = 2)
+auc.Validate = performance(preds.Validate, measure = 'auc')
+auc.Validate@y.values
+```
+```{r}
+posteriors.Validate = predict(bag.Salary, Validation, type = 'prob')
+predic.Validate = predict(rfModel, newdata = Validation)
+Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
+Conf.Validate
+df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
+preds.Validate = prediction(df.Validate[,1], df.Validate[,2])
+ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
+plot(ROC.Validate)
+abline(a = 0, b = 1 , lty = 2)
+auc.Validate = performance(preds.Validate, measure = 'auc')
+auc.Validate@y.values
+```
+
+```{r}
+posteriors.Validate = predict(rfModel, Validation, type = 'prob')
+predic.Validate = predict(rfModel, newdata = Validation)
+Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
+Conf.Validate
+df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
+preds.Validate = prediction(df.Validate[,1], df.Validate[,2])
+ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
+plot(ROC.Validate)
+abline(a = 0, b = 1 , lty = 2)
+auc.Validate = performance(preds.Validate, measure = 'auc')
+auc.Validate@y.values
 ```
