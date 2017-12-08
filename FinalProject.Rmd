@@ -111,6 +111,7 @@ summary(prune.5)
 
 
 ###Single Tree
+##adjusting complexity parameter
 ```{r}
 #better = rpart(Salary ~., data = Data, cp = 0.001530417)
 rpartTune = train(Data[,-ncol(Data)], Data[,"Salary"],
@@ -119,7 +120,7 @@ rpartTune = train(Data[,-ncol(Data)], Data[,"Salary"],
                   trControl = trainControl(method = "cv"))
 rpartTune 
 #rpart.Prune = prune(rpartTune, cp = 5, "CP")
-posteriors.Tree = predict(better, test, type = 'prob', cp = 10)
+posteriors.Tree = predict(rpartTune, test, type = 'prob', cp = 10)
 predic.Tree = predict(rpartTune, newdata = test)
 Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
 Conf.Tree
@@ -132,17 +133,45 @@ auc.Tree = performance(preds.Tree, measure = 'auc')
 auc.Tree@y.values
 
 ```
+#Adjusting max depth 
+```{r}
+#better = rpart(Salary ~., data = Data, cp = 0.001530417)
+rpartTune2 = train(Data[,-ncol(Data)], Data[,"Salary"],
+                  method = "rpart2",
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"))
+rpartTune2
+#rpart.Prune = prune(rpartTune, cp = 5, "CP")
+posteriors.Tree = predict(rpartTune2, test, type = 'prob', cp = 10)
+predic.Tree = predict(rpartTune, newdata = test)
+Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
+Conf.Tree
+df.Tree = cbind(posteriors.Tree[,2], test$Salary)
+preds.Tree = prediction(df.Tree[,1], df.Tree[,2])
+ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
+plot(ROC.Tree)
+abline(a = 0, b = 1 , lty = 2)
+auc.Tree = performance(preds.Tree, measure = 'auc')
+auc.Tree@y.values
+
+```
+
 Tuning complexity paramter increases accuracy more than adjusting depth. 
 
 
 ###Bagged Tree
 ```{r}
+set.seed(34)
 library(ipred)
 library(randomForest)
 p = ncol(Train)-1
 #bag.Salary = bagging(Salary ~., data = Train)
 #plot(bag.Salary)
-bag.Salary = randomForest(Salary~., data = Train, mtry = p, importance = TRUE, ntree = 500)
+bag.Salary = randomForest(Salary~.,
+                          data = Train, 
+                          mtry = p, 
+                          importance = TRUE,
+                          ntree = 500)
 posteriors.Bagged = predict(bag.Salary, newdata = test, type = 'prob')
 predic.Bagged = predict(bag.Salary, newdata = test, type = 'class')
 Conf.Bagged = confusionMatrix(test$Salary, predic.Bagged)
@@ -159,6 +188,7 @@ varImpPlot(bag.Salary)
 ```
 
 ```{r}
+set.seed(29)
 library(ROCR)
 rfModel = tuneRF(Train[,-ncol(Train)], Train[,ncol(Train)], 
                  stepFactor=1.5,
