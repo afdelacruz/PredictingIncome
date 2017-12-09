@@ -14,6 +14,8 @@ library(caret)
 library(GGally)
 library(rpart)
 library(stringr)
+library(ROCR)
+library(rpart.plot)
 ```
 
 DATA PREPROCESSING TODO LIST:
@@ -29,7 +31,7 @@ DATA PREPROCESSING TODO LIST:
 
 
 
-#Loading Data
+###Loading Data
 ```{r}
 raw_data = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
                 sep = ',', stringsAsFactors = F)
@@ -53,7 +55,7 @@ char_vars = names(AllData)[ColClasses=='character']
 #Removing empty space at start, replacing ? with na
 for (var in char_vars){
   AllData[,var] = str_trim(AllData[,var])
-  AllData[AllData[,var]=='?', var] = NA
+  AllData[AllData[,var]=='?', var] = 'Unknown'
   AllData[,var] = factor(AllData[,var])
 }
 ```
@@ -63,34 +65,60 @@ for (var in char_vars){
 ##Missing Values
 ```{r}
 summary(AllData)
+
+nas = AllData %>%
+  filter(Occupation == 'Unknown')
+summary(nas)
 ```
 
 Missing values:
   The majority of missing values come from the Occupation and WorkingClass columns. There is almost a complete overlap between those without information on occupation and those without info on working class. The only other column with missing values is `NativeCountry`. 
+  
+By comparing summary statistics for those with missing values, we can see that the distribution of the other statistics does not vary greatly between those with missing values and those without. (Slight changes in Education, Marital Status) However, we notice that 90% of people with missing values make less than 50k `Salary` as compared to the base rate of 76% in the general population.
+ 
 ```{r}
-##Deal with Missing Values
+AllData[is.na(AllData$Occupation), 'Occupation'] = 'Unknown'
 ```
 
 ##Outliers
 
 ##Binning
 ```{r}
-mean(AllData$CapitalGain>0)
-mean(AllData$CapitalLoss>0)
-CapitalChange = AllData$CapitalGain-AllData$CapitalLoss
-
-AllData$Capital = NA
-AllData[CapitalChange==0,'Capital'] = 'None'
-AllData[CapitalChange<0,'Capital'] = 'Loss'
-AllData[CapitalChange>0,'Capital'] = 'Gain'
-AllData[CapitalChange==99999,'Capital'] = 'Max'
-AllData[,c('CapitalGain', 'CapitalLoss')] = NULL
-AllData$Capital = factor(AllData$Capital)
+#We investigated binning this to see if it would improve results, it did not.
+# mean(AllData$CapitalGain>0)
+# mean(AllData$CapitalLoss>0)
+# CapitalChange = AllData$CapitalGain-AllData$CapitalLoss
+# 
+# AllData$Capital = NA
+# AllData[CapitalChange==0,'Capital'] = 'None'
+# AllData[CapitalChange<0,'Capital'] = 'Loss'
+# AllData[CapitalChange>0,'Capital'] = 'Gain'
+# AllData[CapitalChange==99999,'Capital'] = 'Max'
+# AllData[,c('CapitalGain', 'CapitalLoss')] = NULL
+# AllData$Capital = factor(AllData$Capital)
 ```
 
 The columns `CapitalGain` and `CapitalLoss` can be combined, since a value in Gain automatically means there is a value in Loss, so we combine it into `CapitalChange`.
 
 We can see that only 8% of people have `CapitalChange` over 100, 5% have less than -100, and 87% have exactly 0. Also, a few hundred cases have a `CapitalChange` value of 99999 which appears to be a max cap rather than a true value. Thus, we choose to bin `CapitalChange` into 4 levels: loss, none, gain, and max
+
+Furthermore, notice that `NativeCountry` has over 42 levels, meaning it cannot be used in tree building unless we reduce that number, so we will group by continent.
+
+```{r}
+asia = c('Cambodia', 'China','Hong', 'India', 'Iran', 'Japan', 'Laos', 'Taiwan', 'Thailand', 'Vietnam', 'South')
+north_america = c('Canada', 'United-States')
+south_america = c('Columbia', 'Cuba', 'Dominican-Republic', 'Ecuador' , 'El-Salvador', 'Guatemala', 'Haiti', 'Honduras', 'Jamaica', 'Mexico', 'Nicaragua', 'Outlying-US(Guam-USVI-etc)', 'Peru', 'Philippines', 'Puerto-Rico','Trinidad&Tobago')
+europe = c('England', 'France', 'Germany', 'Greece','Holand-Netherlands', 'Hungary', 'Ireland', 'Italy', 'Poland', 'Portugal', 'Scotland', 'Yugoslavia')
+
+countries = as.character(AllData$NativeCountry)
+AllData$NativeCountry = countries
+AllData[countries %in% asia, 'NativeCountry'] = 'Asia'
+AllData[countries %in% north_america, 'NativeCountry'] = 'North America'
+AllData[countries %in% south_america, 'NativeCountry'] = 'South America'
+AllData[countries %in% europe, 'NativeCountry'] = 'Europe'
+AllData$NativeCountry = factor(AllData$NativeCountry)
+```
+
 
 ##Changing Scales
 ```{r}
@@ -115,7 +143,8 @@ for(var in num_vars){
   hist(AllData[,var], main = var, xlab = var)
 }
 
-non_num_vars = names(AllData)[!numerics]
+non_num_vars = names(AllData)[!numerics][1:7]
+
 for (var in non_num_vars){
   plot(AllData[,var])
 }
@@ -129,36 +158,42 @@ for (var in non_num_vars){
 
 ##Split Data
 ```{r}
-Data = AllData[1:nrow(raw)]
-```
-
-#Classification Tree
-```{r}
 set.seed(2)
-AllData$NativeCountry = NULL
 AllData$EducationNum = NULL
+
 Data = AllData[1:nrow(raw_data),]
 Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
-
 
 trainIndex = sample(nrow(Data),0.8*nrow(Data) )
 Train = Data[trainIndex,]
 test = Data[-trainIndex,]
+```
 
+#Classification Tree
+```{r}
 tree.Salary = tree(Salary~., Train)
 Salary.predict = predict(tree.Salary, Train, type = 'class')
 confusionMatrix(Salary.predict, Train$Salary)
+
+plot(tree.Salary)
+text(tree.Salary)
 ```
+
 
 ```{r}
 set.seed(3)
-class(tree.Salary)
+
 cv.Salary = cv.tree(tree.Salary, FUN = prune.misclass)
-names(cv.Salary)
+
 par(mfrow = c(1,2))
 plot(cv.Salary$size, cv.Salary$dev, type = 'b')
 plot(cv.Salary$k, cv.Salary$dev, type = 'b')
 ```
+
+Deviation is min at 5 and 8
+
+Deviation is min at small k
+
 ```{r}
 prune.8 = prune.misclass(tree.Salary, best = 8)
 prune.5 = prune.misclass(tree.Salary, best = 5)
@@ -167,25 +202,56 @@ tree.pred8 = predict(prune.8,test, type = 'class')
 tree.pred5 = predict(prune.5,test, type = 'class')
 confusion.8 = confusionMatrix(tree.pred8,test$Salary)
 confusion.5 = confusionMatrix(tree.pred5,test$Salary)
+confusion.8
 confusion.5
 summary(prune.5)
+plot(prune.5)
+text(prune.5)
+```
+
+we've built a classification tree with tree, and pruned
+
+now we're gonna do the same thing in rpart
+
+###Single Tree
+
+##adjusting complexity parameter
+```{r}
+
+#tuned to optimal complexity parameter
+rpartTune = train(Train[,-ncol(Train)], Train[,"Salary"],
+                  method = c("rpart"),
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"))
+
+rpartTune 
+
+best.cp = rpartTune$results[which.max(rpartTune$results$Accuracy), 'cp']
+
+rpartTuneDepth = train(Train[,-ncol(Train)], Train[,"Salary"],
+                  method = c("rpart2"),
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"), control = rpart.control(cp = best.cp))
+
+best.depth = rpartTuneDepth$results[which.max(rpartTuneDepth$results$Accuracy), 'maxdepth']
+
+tuning.params = rpart.control(cp = best.cp, maxdepth = best.depth)
+
+final.tree = rpart(Salary ~ ., data = Train, control = tuning.params)
+
+posteriors.Tree = predict(final.tree, test, type = 'prob')
+predic.Tree = predict(final.tree, newdata = test, type = 'class')
+Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
+Conf.Tree
+
+ok = summary(rpartTune)
+prp(final.tree)
 ```
 
 
-###Single Tree
-##adjusting complexity parameter
+
+ROC/AUC
 ```{r}
-#better = rpart(Salary ~., data = Data, cp = 0.001530417)
-rpartTune = train(Data[,-ncol(Data)], Data[,"Salary"],
-                  method = "rpart",
-                  tuneLength = 10,
-                  trControl = trainControl(method = "cv"))
-rpartTune 
-#rpart.Prune = prune(rpartTune, cp = 5, "CP")
-posteriors.Tree = predict(rpartTune, test, type = 'prob', cp = 10)
-predic.Tree = predict(rpartTune, newdata = test)
-Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
-Conf.Tree
 df.Tree = cbind(posteriors.Tree[,2], test$Salary)
 preds.Tree = prediction(df.Tree[,1], df.Tree[,2])
 ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
@@ -193,8 +259,9 @@ plot(ROC.Tree)
 abline(a = 0, b = 1 , lty = 2)
 auc.Tree = performance(preds.Tree, measure = 'auc')
 auc.Tree@y.values
-
 ```
+
+
 #Adjusting max depth 
 ```{r}
 #better = rpart(Salary ~., data = Data, cp = 0.001530417)
