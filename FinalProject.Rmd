@@ -8,7 +8,6 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
-library(dummies)
 library(randomForest)
 library(tree)
 library(caret)
@@ -28,46 +27,109 @@ DATA PREPROCESSING TODO LIST:
 -Plots
 -Summary Stats
 
+
+
+#Loading Data
 ```{r}
 raw_data = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
-                sep = ',')
+                sep = ',', stringsAsFactors = F)
+
+test_set = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test",
+                      sep = ',', skip = 1, stringsAsFactors = F)
+
+test_set$V15 = str_replace(test_set$V15, "\\.", "")
+
+AllData = rbind(raw_data, test_set)
+
 column_names = c("age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MartialStatus", "Occupation",
           "Relationship", "Race", "Sex", "CapitalGain", "CapitalLoss", "HoursWeek", 
           "NativeCountry", "Salary")
-
-test_set = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test",
-                      sep = ',', skip = 1)
-
-test_set$V15 = str_replace(test_set$V15, "\\.", "")
-test_set$V15
-AllData = rbind(raw_data, test_set)
 colnames(AllData) = column_names
-which(complete.cases(AllData) == FALSE)
-summary(AllData)
 
-```
-No missing values 
-
-```{r}
 ColClasses = sapply(AllData, class)
-numerics = ColClasses == "integer"
+
+char_vars = names(AllData)[ColClasses=='character']
+
+#Removing empty space at start, replacing ? with na
+for (var in char_vars){
+  AllData[,var] = str_trim(AllData[,var])
+  AllData[AllData[,var]=='?', var] = NA
+  AllData[,var] = factor(AllData[,var])
+}
+```
+
+#Exploratory Data Analysis
+
+##Missing Values
+```{r}
+summary(AllData)
+```
+
+Missing values:
+  The majority of missing values come from the Occupation and WorkingClass columns. There is almost a complete overlap between those without information on occupation and those without info on working class. The only other column with missing values is `NativeCountry`. 
+```{r}
+##Deal with Missing Values
+```
+
+##Outliers
+
+##Binning
+```{r}
+mean(AllData$CapitalGain>0)
+mean(AllData$CapitalLoss>0)
+CapitalChange = AllData$CapitalGain-AllData$CapitalLoss
+
+AllData$Capital = NA
+AllData[CapitalChange==0,'Capital'] = 'None'
+AllData[CapitalChange<0,'Capital'] = 'Loss'
+AllData[CapitalChange>0,'Capital'] = 'Gain'
+AllData[CapitalChange==99999,'Capital'] = 'Max'
+AllData[,c('CapitalGain', 'CapitalLoss')] = NULL
+AllData$Capital = factor(AllData$Capital)
+```
+
+The columns `CapitalGain` and `CapitalLoss` can be combined, since a value in Gain automatically means there is a value in Loss, so we combine it into `CapitalChange`.
+
+We can see that only 8% of people have `CapitalChange` over 100, 5% have less than -100, and 87% have exactly 0. Also, a few hundred cases have a `CapitalChange` value of 99999 which appears to be a max cap rather than a true value. Thus, we choose to bin `CapitalChange` into 4 levels: loss, none, gain, and max
+
+##Changing Scales
+```{r}
+numerics = (sapply(AllData, class) == "integer")
 AllData[,numerics] = scale(AllData[,numerics])
-AllData[,numerics]
 sapply(AllData[,numerics], sd)
 ```
-Numeric columns of data is now mean-centered and scaled
+Numeric columns of data are now mean-centered and scaled
 
-Since we are using trees, it is unneccessary to create dummy variables. Also, each factor has several levels so we did not want our matrix to become too large. 
+##Dummy Indicators
 
-
+##Summary Statistics
 ```{r}
 summary(AllData)
 ```
-Age, WorkingClass, Education-Years, Race, Sex, Capital Gain, Salary
-```{r}
-useful = c('age', 'WorkClass', 'EducationNum', 'Race', 'Sex', 'CapitalGain', 'Salary')
-#ggpairs(master.df[,useful])
 
+##Visualizing Distributions
+```{r}
+num_vars = names(AllData)[numerics]
+
+for(var in num_vars){
+  hist(AllData[,var], main = var, xlab = var)
+}
+
+non_num_vars = names(AllData)[!numerics]
+for (var in non_num_vars){
+  plot(AllData[,var])
+}
+```
+
+##Adjustments
+```{r}
+```
+
+#Association between predictor and response
+
+##Split Data
+```{r}
+Data = AllData[1:nrow(raw)]
 ```
 
 #Classification Tree
@@ -238,6 +300,7 @@ abline(a = 0, b = 1 , lty = 2)
 auc.Validate = performance(preds.Validate, measure = 'auc')
 auc.Validate@y.values
 ```
+
 ```{r}
 posteriors.Validate = predict(bag.Salary, Validation, type = 'prob')
 predic.Validate = predict(rfModel, newdata = Validation)
