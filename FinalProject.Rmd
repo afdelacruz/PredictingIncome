@@ -244,7 +244,6 @@ predic.Tree = predict(final.tree, newdata = test, type = 'class')
 Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
 Conf.Tree
 
-ok = summary(rpartTune)
 prp(final.tree)
 ```
 
@@ -263,7 +262,7 @@ auc.Tree@y.values
 
 
 #Adjusting max depth 
-```{r}
+```{r, eval = F}
 #better = rpart(Salary ~., data = Data, cp = 0.001530417)
 rpartTune2 = train(Data[,-ncol(Data)], Data[,"Salary"],
                   method = "rpart2",
@@ -286,6 +285,15 @@ auc.Tree@y.values
 ```
 
 Tuning complexity paramter increases accuracy more than adjusting depth. 
+
+```{r}
+imp = varImp(final.tree) 
+importance = data.frame(var = rownames(imp), importance = imp$Overall)
+importance %>%
+  arrange(desc(importance))
+prp(final.tree)
+```
+
 
 
 ###Bagged Tree
