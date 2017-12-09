@@ -16,6 +16,8 @@ library(rpart)
 library(stringr)
 library(ROCR)
 library(rpart.plot)
+library(ipred)
+library(randomForest)
 ```
 
 DATA PREPROCESSING TODO LIST:
@@ -129,6 +131,7 @@ sapply(AllData[,numerics], sd)
 Numeric columns of data are now mean-centered and scaled
 
 ##Dummy Indicators
+Classification trees do not require one-hot encoding
 
 ##Summary Statistics
 ```{r}
@@ -170,7 +173,10 @@ test = Data[-trainIndex,]
 ```
 
 #Classification Tree
+
+##Using tree()
 ```{r}
+set.seed(3)
 tree.Salary = tree(Salary~., Train)
 Salary.predict = predict(tree.Salary, Train, type = 'class')
 confusionMatrix(Salary.predict, Train$Salary)
@@ -179,10 +185,8 @@ plot(tree.Salary)
 text(tree.Salary)
 ```
 
-
+##Tuning tree()
 ```{r}
-set.seed(3)
-
 cv.Salary = cv.tree(tree.Salary, FUN = prune.misclass)
 
 par(mfrow = c(1,2))
@@ -192,8 +196,9 @@ plot(cv.Salary$k, cv.Salary$dev, type = 'b')
 
 Deviation is min at 5 and 8
 
-Deviation is min at small k
+Deviation is min at small k (k=0)
 
+##Pruning tree
 ```{r}
 prune.8 = prune.misclass(tree.Salary, best = 8)
 prune.5 = prune.misclass(tree.Salary, best = 5)
@@ -209,25 +214,22 @@ plot(prune.5)
 text(prune.5)
 ```
 
-we've built a classification tree with tree, and pruned
 
-now we're gonna do the same thing in rpart
+Now the same thing in rpart
 
-###Single Tree
+##rpart()
 
-##adjusting complexity parameter
+##Tuning complexity then depth
 ```{r}
-
 #tuned to optimal complexity parameter
 rpartTune = train(Train[,-ncol(Train)], Train[,"Salary"],
                   method = c("rpart"),
                   tuneLength = 10,
                   trControl = trainControl(method = "cv"))
 
-rpartTune 
-
 best.cp = rpartTune$results[which.max(rpartTune$results$Accuracy), 'cp']
 
+#Then depth
 rpartTuneDepth = train(Train[,-ncol(Train)], Train[,"Salary"],
                   method = c("rpart2"),
                   tuneLength = 10,
@@ -247,33 +249,41 @@ Conf.Tree
 prp(final.tree)
 ```
 
-
-
-ROC/AUC
+##Tuning depth then complexity
 ```{r}
-df.Tree = cbind(posteriors.Tree[,2], test$Salary)
-preds.Tree = prediction(df.Tree[,1], df.Tree[,2])
-ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
-plot(ROC.Tree)
-abline(a = 0, b = 1 , lty = 2)
-auc.Tree = performance(preds.Tree, measure = 'auc')
-auc.Tree@y.values
-```
-
-
-#Adjusting max depth 
-```{r, eval = F}
-#better = rpart(Salary ~., data = Data, cp = 0.001530417)
-rpartTune2 = train(Data[,-ncol(Data)], Data[,"Salary"],
+rpartTune2 = train(Train[,-ncol(Data)], Train[,"Salary"],
                   method = "rpart2",
                   tuneLength = 10,
                   trControl = trainControl(method = "cv"))
 rpartTune2
-#rpart.Prune = prune(rpartTune, cp = 5, "CP")
-posteriors.Tree = predict(rpartTune2, test, type = 'prob', cp = 10)
-predic.Tree = predict(rpartTune, newdata = test)
+
+best.depth2 = rpartTune2$results[which.max(rpartTune2$results$Accuracy), 'maxdepth']
+
+rpartTune2cp = train(Train[,-ncol(Train)], Train[,"Salary"],
+                  method = c("rpart"),
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"), control = rpart.control(maxdepth = best.depth))
+
+best.cp2 = rpartTune$results[which.max(rpartTune$results$Accuracy), 'cp']
+
+tuning.params2 = rpart.control(cp = best.cp2, maxdepth = best.depth2)
+
+final.tree2 = rpart(Salary ~ ., data = Train, control = tuning.params2)
+
+posteriors.Tree = predict(final.tree2, test, type = 'prob')
+predic.Tree = predict(final.tree2, newdata = test, type = 'class')
 Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
 Conf.Tree
+```
+
+ROC/AUC
+```{r}
+final.tree = rpart(Salary ~ ., data = Train, control = tuning.params)
+
+posteriors.Tree = predict(final.tree, test, type = 'prob')
+predic.Tree = predict(final.tree, newdata = test, type = 'class')
+Conf.Tree = confusionMatrix(test$Salary, predic.Tree)
+
 df.Tree = cbind(posteriors.Tree[,2], test$Salary)
 preds.Tree = prediction(df.Tree[,1], df.Tree[,2])
 ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
@@ -281,43 +291,90 @@ plot(ROC.Tree)
 abline(a = 0, b = 1 , lty = 2)
 auc.Tree = performance(preds.Tree, measure = 'auc')
 auc.Tree@y.values
-
 ```
 
-Tuning complexity paramter increases accuracy more than adjusting depth. 
 
+##Variable Importance
 ```{r}
 imp = varImp(final.tree) 
 importance = data.frame(var = rownames(imp), importance = imp$Overall)
 importance %>%
   arrange(desc(importance))
-prp(final.tree)
 ```
-
 
 
 ###Bagged Tree
 ```{r}
 set.seed(34)
-library(ipred)
-library(randomForest)
 p = ncol(Train)-1
-#bag.Salary = bagging(Salary ~., data = Train)
-#plot(bag.Salary)
+
+all.trees = c(10,25,50,100,200,500)
+results = data.frame(ntree = all.trees, auc = 0)
+
+for (i in 1:length(all.trees)){
+  n = all.trees[i]
+  forest = randomForest(Salary~.,
+                        data = Train,
+                        mtry = p,
+                        importance = F,
+                        ntree = n)
+  
+  posteriors.Bagged = predict(forest, newdata = test, type = 'prob')
+  predic.Bagged = predict(forest, newdata = test, type = 'class')
+  df.Bagged = cbind(posteriors.Bagged[,2], test$Salary)
+  preds.Bagged = prediction(df.Bagged[,1], df.Bagged[,2])
+  ROC.Bagged = performance(preds.Bagged, measure = 'tpr', x.measure = 'fpr')
+  auc.Bagged <-performance(preds.Bagged, measure = 'auc')
+  results[i,'auc'] = auc.Bagged@y.values[[1]]
+  print(i)
+}
+
+plot(results)
+```
+
+We can see where the number of trees stops helping the model
+
+```{r}
+control = trainControl(method = 'repeatedcv', number = 5, repeats = 2, search = 'random')
+
+grid <- expand.grid(maxdepth = c(1, 5), mfinal = c(1,100))
+
 bag.Salary = randomForest(Salary~.,
                           data = Train, 
                           mtry = p, 
                           importance = TRUE,
-                          ntree = 500)
+                          ntree = 25,
+                          )
+metric = 'Accuracy'
+ntrees = 25
+tunegrid = expand.grid(.ntrees=ntrees)
+
+bag.Salary = train(Salary~.,
+                   method = 'Adabag',
+                   metric = 'ROC',
+                   data = Train,
+                   trControl = control,
+                   tuneGrid = grid)
+```
+
+```{r}
+
+```
+
+
+
+```{r}
 posteriors.Bagged = predict(bag.Salary, newdata = test, type = 'prob')
 predic.Bagged = predict(bag.Salary, newdata = test, type = 'class')
 Conf.Bagged = confusionMatrix(test$Salary, predic.Bagged)
 Conf.Bagged
+
 df.Bagged = cbind(posteriors.Bagged[,2], test$Salary)
 preds.Bagged = prediction(df.Bagged[,1], df.Bagged[,2])
 ROC.Bagged = performance(preds.Bagged, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Bagged)
 abline(a = 0, b = 1, lty = 2)
+
 auc.Bagged <-performance(preds.Bagged, measure = 'auc')
 auc.Bagged@y.values
 importance(bag.Salary)
