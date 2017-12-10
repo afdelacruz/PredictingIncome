@@ -32,7 +32,7 @@ test_set$V15 = str_replace(test_set$V15, "\\.", "")
 
 AllData = rbind(raw_data, test_set)
 
-column_names = c("age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MaritalStatus", "Occupation",
+column_names = c("Age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MaritalStatus", "Occupation",
           "Relationship", "Race", "Sex", "CapitalGain", "CapitalLoss", "HoursWeek", 
           "NativeCountry", "Salary")
 colnames(AllData) = column_names
@@ -56,6 +56,9 @@ for (var in char_vars){
 nas = AllData %>%
   filter(Occupation =="Unknown")
 summary(nas)
+
+AllData = AllData %>%
+  filter(NativeCountry != 'Unknown')
 ```
 
 Missing values:
@@ -63,21 +66,12 @@ Missing values:
   
 By comparing summary statistics for those with missing values, we can see that the distribution of the other statistics does not vary greatly between those with missing values and those without. (Slight changes in Education, Marital Status) However, we notice that 90% of people with missing values make less than 50k `Salary` as compared to the base rate of 76% in the general population. 
 
-```{r}
-#Removing empty space at start, replacing ? with unknown
-for (var in char_vars){
-  AllData[,var] = str_trim(AllData[,var])
-  AllData[AllData[,var]=='?', var] = 'Unknown'
-  AllData[,var] = factor(AllData[,var])
-}
-```
-
 ##Outliers
 See binning. 
 
 ##Binning
 ```{r}
-#We investigated binning this to see if it would improve results, it did not.
+# #We investigated binning this to see if it would improve results, it did not.
 # mean(AllData$CapitalGain>0)
 # mean(AllData$CapitalLoss>0)
 # CapitalChange = AllData$CapitalGain-AllData$CapitalLoss
@@ -156,6 +150,9 @@ AllData$EducationNum = NULL
 
 AllData$Salary = factor(ifelse(as.character(AllData$Salary) == '<=50K', 'No', 'Yes'))
 
+temp = factor(AllData$Salary, levels(AllData$Salary)[c(2,1)])
+AllData$Salary = temp
+
 Data = AllData[1:nrow(raw_data),]
 Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
 
@@ -173,7 +170,7 @@ tree.Salary = tree(Salary~., Train)
 Salary.predict = predict(tree.Salary, Train, type = 'class')
 confusionMatrix(Salary.predict, Train$Salary)
 
-plot(tree.Salary)
+plot(tree.Salary, main = 'Original Tree from tree()')
 text(tree.Salary)
 ```
 

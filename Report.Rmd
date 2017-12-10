@@ -2,13 +2,320 @@
 title: "Report"
 author: "Landon Kleinbrodt and Andrew de la Cruz"
 date: "12/10/2017"
-output: pdf_document
+output:
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(stringr)
+library(tidyverse)
+library(tree)
+library(caret)
+library(rpart.plot)
+library(ROCR)
+library(ggplot2)
 ```
 
-#Introduction
+```{r, echo = F}
+raw_data = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+                sep = ',', stringsAsFactors = F)
 
-*Can a classification model built on census data predict whether an individual's yearly income exceeds $50k?*
+test_set = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test",
+                      sep = ',', skip = 1, stringsAsFactors = F)
+
+test_set$V15 = str_replace(test_set$V15, "\\.", "")
+
+AllData = rbind(raw_data, test_set)
+
+column_names = c("Age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MaritalStatus", "Occupation",
+          "Relationship", "Race", "Sex", "CapitalGain", "CapitalLoss", "HoursWeek", 
+          "NativeCountry", "Salary")
+colnames(AllData) = column_names
+
+ColClasses = sapply(AllData, class)
+```
+
+#Predicting Income
+
+In this report we will attempt to answer the question: can a classification model built on census data predict whether or not an individul's yearly income exceeds $50,000? Specifically, we will investigated the following classification methods: single tree, bagged forest, and random forest. The performance of these three models will be analyzed and compared to determine the best possible model for the data.
+
+##Data
+
+The data set used in this project is the [Census Income Data Set](https://archive.ics.uci.edu/ml/datasets/Census+Income) from the UCI Machine Learning Repository. This data set was donated by Ronny Kohavi and Barry Becker in 2001 and has been cited in over a dozen papers. The set contains ~49k observations of 14 attributes detailing different pieces of census information. Some are continuous, such as capital-gains and hours-per-week worked, while most are categorical, like education level, race, and relationship status. This data has already been split into a training (2/3) and validation set (1/3). A small subsection of the data is shown below.
+
+```{r, echo = F}
+show = c('Age', 'Education', 'Occupation', 'Relationship', 'Race', 'Sex', 'Salary')
+head(AllData[, show])
+```
+
+##Overview
+
+We will begin with a brief discussion of the data loading and pre processing, followed by an exploratory data analysis. Once finished, we move on to fitting and tuning the three types of models. Finally, we will compare the results of these models - specifically using confusion matrices, accuracy rates, and ROC curves. Finally we will choose our best model and validate it on the included test data, as well as compare its predictive test power to the other models.
+
+#Exploratory Data Analysis
+
+###Loading and Preprocessing
+
+Loading in the data from the UCI repository was straightforward, but once loaded it required some pre-procesing. For example, all the categorical variable values began with an empty space, and the `Salary` column of the test data contained an extra `.` in all its entries. Also, the data contained ~6500 total missing values, denoted by the character `?`. The data are supplied as two files (train and test), which we concatanated so that all preprocessing steps were applied equally, and splitting them up again before model training.
+
+###Missing Values
+
+The majority of the missing values come from the `Occupation` and `WorkClass` columns. In fact, there is almost a complete overlap betwen those without information on occupation and those without information on working class, which makes sense as the two categories are quite related. For the most part, the distribution of the other statistics did not vary greatly between those with missing values and those without. Since there were relatively few individuals with missing values, we were first tempted to simply drop those observations with any missing data. However, analysis shows that 90% of people with missing values make less than $50k as ompared to the base rate of 75% in the general population. It would be misrepresentative to rely on imputation to fill in these missing values, especially when we see such a sharp difference in salary distribution. Therefore, we chose to encode missing `Occupation` values as 'Unknown', this allows us to keep the information gained from an unknown occupation (which we see relates to salary) without misrepresenting the individual's status.
+
+The only other variable with missing values is `NativeCountry`, with less than a thousand unknowns. Inspecting this subset reveals that they follow the same distribution as the general population, so it does not appear that excluding this data will bias our models against any specific subset. Thus, since these individuals seem to represent a very small, random subset of the general population we choose to exclude them from the model building process.
+
+```{r, echo = F}
+char_vars = names(AllData)[ColClasses=='character']
+for (var in char_vars){
+  AllData[,var] = str_trim(AllData[,var])
+  AllData[AllData[,var]=='?', var] = 'Unknown'
+  AllData[,var] = factor(AllData[,var])
+}
+
+AllData = AllData %>%
+  filter(NativeCountry != 'Unknown')
+```
+
+###Outliers and Binning
+
+There were two considerations to make in regards to binning. First, the `CapitalGain` and `CapitalLoss` columns are extremely skewed. 
+
+```{r, echo = F, fig.width = 4, fig.height = 5}
+plot(density(AllData$CapitalGain), main = 'CapitalGain Distribution', xlab = 'CapitalGain')
+plot(density(AllData$CapitalLoss), main = 'CapitalLoss Distribution', xlab = 'CapitalLoss')
+```
+
+First, we noticed that `CapitalGain` and `CapitalLoss` are two sides of the same coin (if CapitalGain>0 then CapitalLoss = 0 and vice versa), and can be combined. This creates a variable `CapitalChange` which is again very skewed: 5% have less than 0, 87% of people have exactly 0, 8% experienced some gain, and .5% experienced the max value. This skewed data seemed ideal for binning, as it was clear those individuals with max `CapitalGain` behaved very differently than those with 0. However, the entirety of this report was run by binning into a single column (into those above specified categories) and by leaving the two columns as they are, and better performance was achieved without binning.
+
+```{r, echo = F}
+# #We investigated binning this to see if it would improve results, it did not.
+# mean(AllData$CapitalGain>0)
+# mean(AllData$CapitalLoss>0)
+# CapitalChange = AllData$CapitalGain-AllData$CapitalLoss
+# 
+# AllData$Capital = NA
+# AllData[CapitalChange==0,'Capital'] = 'None'
+# AllData[CapitalChange<0,'Capital'] = 'Loss'
+# AllData[CapitalChange>0,'Capital'] = 'Gain'
+# AllData[CapitalChange==99999,'Capital'] = 'Max'
+# AllData[,c('CapitalGain', 'CapitalLoss')] = NULL
+# AllData$Capital = factor(AllData$Capital)
+```
+
+Furthermore, we can see that `NativeCountry` has over 40 levels, which exceeds the maximum number of many classification models. Thus, we binned this column into continents/regions: Asia, North America, South America/Caribbean, and Europe
+
+```{r, echo = F}
+asia = c('Cambodia', 'China','Hong', 'India', 'Iran', 'Japan', 'Laos', 'Taiwan', 'Thailand', 'Vietnam', 'South')
+north_america = c('Canada', 'United-States')
+south_america = c('Columbia', 'Cuba', 'Dominican-Republic', 'Ecuador' , 'El-Salvador', 'Guatemala', 'Haiti', 'Honduras', 'Jamaica', 'Mexico', 'Nicaragua', 'Outlying-US(Guam-USVI-etc)', 'Peru', 'Philippines', 'Puerto-Rico','Trinidad&Tobago')
+europe = c('England', 'France', 'Germany', 'Greece','Holand-Netherlands', 'Hungary', 'Ireland', 'Italy', 'Poland', 'Portugal', 'Scotland', 'Yugoslavia')
+
+countries = as.character(AllData$NativeCountry)
+AllData$NativeCountry = countries
+AllData[countries %in% asia, 'NativeCountry'] = 'Asia'
+AllData[countries %in% north_america, 'NativeCountry'] = 'North America'
+AllData[countries %in% south_america, 'NativeCountry'] = 'South America'
+AllData[countries %in% europe, 'NativeCountry'] = 'Europe'
+AllData$NativeCountry = factor(AllData$NativeCountry)
+```
+
+
+###Changing Scales
+
+While most of the data is categorical, the various numerical variables are on widely different scales. `Age` varies between 17 and 99, `EducationNum` varies between 1 and 16, `HoursWeek` between 1 and 99, and `Capital` gains and losses can be anywhere from 0 to 99,999. This report focuses on tree-based classifers, which are scale invariant, but we chose to center and scale anyways so that other methods of regression/classification could be easily integrated if need be.
+
+```{r, echo = F}
+prescale = AllData
+numerics = (sapply(AllData, class) == "integer")
+AllData[,numerics] = scale(AllData[,numerics])
+```
+
+###Dummy Indicators
+
+Tree based classification methods can easily handle categorical variables, and so one-hot-encoding is unecessary. Furthermore, since there are so many categorical variables with so many levels, dummifying them one would greatly increase the number of predictor columns in our data matrix.
+
+###Summary Statistics and Distributions
+
+The summary statistics before and after transformation, as well as the various correlations between predictors were explored and analyzed (figures and code can be found in the appendix). A few points are of note. First, 
+many of the categorical are skewed around one mode value. Often this phenomenon likely reflects the trends of the general population: the vast majority of people are Private `WorkClass` and most have either highschool or some college education. Other skews seem to be more results of sampling bias, for example over 85% of participants are white, and over two thirds are male. While it is important to keep these skews in mind, they did not appear to overly interfere with the predictive power of our models.
+
+```{r, echo = F, fig.width = 3, fig.height = 3.5}
+num_vars = names(AllData)[numerics]
+
+num_to_show = c('HoursWeek', 'EducationNum')
+
+for(var in num_to_show){
+  hist(prescale[,var], main = var, xlab = var)
+}
+
+cat_to_show = c('WorkClass', 'Race', 'Sex')
+
+for (var in cat_to_show){
+  plot(prescale[,var], main = var)
+}
+```
+
+
+
+EDUCATION
+#EDUCAION
+#EDUCATION
+
+#2) Model Building
+
+After pre-processing and initial exploration, the data was split back into the training and validation sets as provided initially (a 2/3-1/3 split). Furthermore, since we have enough observations, we split the training data again into train (80%) and test (20%) groups. This way, we can use the first test group as a means of comparing the predictive power of our models out of bag, and then we can use the holdout validation set to get a truly indicative performance measure of our final model.
+
+We also specify that those with >$50k are classified as "Yes" and those with less are classified as "No".
+
+```{r, echo = F}
+set.seed(2)
+AllData$EducationNum = NULL
+
+AllData$Salary = factor(ifelse(as.character(AllData$Salary) == '<=50K', 'No', 'Yes'))
+
+temp = factor(AllData$Salary, levels(AllData$Salary)[c(2,1)])
+AllData$Salary = temp
+
+Data = AllData[1:nrow(raw_data),]
+Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
+
+trainIndex = sample(nrow(Data),0.8*nrow(Data) )
+Train = Data[trainIndex,]
+test = Data[-trainIndex,]
+```
+
+
+For each of the performed methods, you can include a brief description of what each method does (e.g. basic working principles, key ideas, goal), the functions and packages used to carry out the model building process, the main results (tables, summaries, graphs) and their corresponding descriptions and interpretations.
+
+Fit a classification tree (see examples in ISL chapter 8, and APM chapter 14).
+Make plots and describe the steps you took to justify choosing optimal tuning parameters.
+Report your 5 (or 6 or 7) important features (could be either just 5, or 6 or 7), with their variable importance statistics.
+Report the training accuracy rate.
+Plot the ROC curve, and report its area under the curve (AUC) statistic.
+
+##Classification Tree
+
+The classification tree is one of the most intuitive and easily readable forms of classification. A tree is a combination of nodes, where each node has a splitting criterion that results in dividing its input group into two output groups based off their values in some variable. At the bottom of the tree are the terminal nodes, the proportions of classes in those terminal nodes decides what the overall classification is for a new individual that ends up in that terminal node. While there are many methods to determine which split is best, the overall goal is to reduce the entropy with each split - to have each new group be more homogenous than before the split.
+
+There are many variations and approaches to building a classification tree, this report explored two of them. First, we used the `tree()` function from the package `tree` to build a base tree (pictured below) 
+
+```{r, echo = F}
+set.seed(3)
+tree.Salary = tree(Salary~., Train)
+Salary.predict = predict(tree.Salary, Train, type = 'class')
+
+plot(tree.Salary, main = 'Original Tree from tree()')
+text(tree.Salary)
+```
+
+Notice how some of the splits in this tree are redundant, the final split on the far left and far right both result in the same classification. This encourages us to use cross validation to find more optimal parameters. Specifically, we used `cv.tree()` to determine the optimal parameters for tree size and for tree complexity.
+
+```{r, echo = F}
+cv.Salary = cv.tree(tree.Salary, FUN = prune.misclass)
+
+par(mfrow = c(1,2))
+plot(cv.Salary$size, cv.Salary$dev, type = 'b', ylab = 'Error', xlab = 'Size')
+plot(cv.Salary$k, cv.Salary$dev, type = 'b', ylab = 'Error', xlab = 'Complexity Constant')
+```
+
+From these plots we can see that error stops decreasing with a tree size of 5, and that error is minimized for small complexity. To be thorough, we pruned our original tree using `prune.misclass`, once with a desired size of 5 and once with a size of 8. Comparing these two reveals that the tree of size 5 performs equally well and is considerably simpler. Thus we see the final result from our `tree()` construction below:
+
+```{r, echo = F}
+prune.5 = prune.misclass(tree.Salary, best = 5)
+
+tree.pred5 = predict(prune.5,test, type = 'class')
+tree.conf = confusionMatrix(tree.pred5,test$Salary)
+
+plot(prune.5)
+text(prune.5)
+```
+
+We can see that this tree splits on 3 variables. First it splits based on relationship status, and then by education or capital gain, and then again by capital gain if necessary. Immediately we can see that a low `CapitalGain` is associated with low income as we would expect.
+
+`tree()` is a relatively simple function, and we can obtain more complex results and interpretation using the `rpart` package, which we will do now.
+
+the `rpart` package allows us to train our model using the `train()` function from the `caret` package, by setting `method = 'rpart'`. Using cross validation we tuned the complexity parameter and depth of the tree to result in a depth of 23 and a complexity of ~.002. We then used `rpart` with the specified tuning parameters to arrive at the final tree:
+
+```{r, echo = F}
+#tuned to optimal complexity parameter
+rpartTune = train(Train[,-ncol(Train)], Train[,"Salary"],
+                  method = c("rpart"),
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"))
+
+best.cp = rpartTune$results[which.max(rpartTune$results$Accuracy), 'cp']
+
+#Then depth
+rpartTuneDepth = train(Train[,-ncol(Train)], Train[,"Salary"],
+                  method = c("rpart2"),
+                  tuneLength = 10,
+                  trControl = trainControl(method = "cv"), control = rpart.control(cp = best.cp))
+
+best.depth = rpartTuneDepth$results[which.max(rpartTuneDepth$results$Accuracy), 'maxdepth']
+
+tuning.params = rpart.control(cp = best.cp, maxdepth = best.depth)
+
+final.tree = rpart(Salary ~ ., data = Train, control = tuning.params)
+
+prp(final.tree)
+```
+
+Immediately it is apparant how much more complex this tree is than the basic one produced by `tree()`. We also see that it includes significantly more variables than previously. We can use `varImp()` of the `caret` package to determine the relative importance of each variable based upon the reduction in the loss function attributed to each variable.
+
+```{r, echo = F}
+imp = varImp(final.tree) 
+importance = data.frame(var = rownames(imp), importance = imp$Overall)
+
+importance %>%
+  arrange(desc(importance))
+```
+
+Now we will examine the differences in performance:
+
+```{r, echo = F}
+###tree
+posteriors.Tree = predict(prune.5, test, type = 'vector')
+predic.Tree = predict(prune.5, newdata = test, type = 'class')
+
+df.Tree = cbind(posteriors.Tree[,2], test$Salary)
+df.Tree[,2] = df.Tree[,2]-1
+preds.Tree = prediction(df.Tree[,1], df.Tree[,2])
+ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
+
+auc.Tree = performance(preds.Tree, measure = 'auc')
+
+###rpart
+posteriors.rpart = predict(final.tree, test, type = 'prob')
+predic.rpart = predict(final.tree, newdata = test, type = 'class')
+rpart.conf = confusionMatrix(predic.rpart,test$Salary)
+
+df.rpart = cbind(posteriors.rpart[,2], test$Salary)
+preds.rpart = prediction(df.rpart[,1], df.rpart[,2])
+ROC.rpart = performance(preds.rpart, measure = 'tpr', x.measure = 'fpr')
+
+auc.rpart = performance(preds.rpart, measure = 'auc')
+```
+
+
+```{r, echo = F}
+Metric = c('Accuracy', 'Sensitivity', 'Specificity', 'AUC')
+Tree = c(tree.conf$overall[1], tree.conf$byClass[1], tree.conf$byClass[2], auc.Tree@y.values[[1]])
+rPart = c(rpart.conf$overall[1], rpart.conf$byClass[1], rpart.conf$byClass[2], auc.rpart@y.values[[1]])
+
+results = data.frame(Tree, rPart, row.names = Metric)
+
+rpart.roc = data.frame(x = ROC.rpart@x.values[[1]], y = ROC.rpart@y.values[[1]], model = 'rPart')
+tree.roc = data.frame(x = ROC.Tree@x.values[[1]], y = ROC.Tree@y.values[[1]], model = 'Tree')
+
+rocs = rbind(rpart.roc, tree.roc)
+basic = data.frame(x=c(0,1), y = c(0,1))
+
+ggplot(data = rocs, aes(x = x, y = y)) + geom_line(aes(col = model)) + geom_line(data = basic, linetype = 2) + 
+  xlab('False Positive Rate') + ylab('True Positive Rate') + ggtitle(label = 'ROC Curves', subtitle = 'Comparing tree() and rpart()')
+
+results
+```
+
+Despite the vast differences in complexity, the trees created by `rpart()` and by `tree()` have very similar performance metrics. We can see that their ROC curves are essentially the same, with rPart performing slightly better, resulting in a ~.03 higher AUC. Similarly, rpart produces a slightly higher accuracy rating of .87 compared to .85. The most important difference though, is that rpart produces a significantly higher sensitivity while only perforing very slightly worse in specificity. Thus, these metrics lead us to conclude that the tree generated by rpart has a higher predictive power. It is important to note that the tree created by `tree()` is **much** more readable and easily interpretable than rpart's, but this reports focuses on predictive power and thus rpart produces the superior model.
+
