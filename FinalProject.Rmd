@@ -164,7 +164,7 @@ for (var in non_num_vars){
 set.seed(2)
 AllData$EducationNum = NULL
 
-AllData$Salary = factor(ifelse(as.character(AllData$Salary) == '<=50K', 'Yes', 'No'))
+AllData$Salary = factor(ifelse(as.character(AllData$Salary) == '<=50K', 'No', 'Yes'))
 
 Data = AllData[1:nrow(raw_data),]
 Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
@@ -360,22 +360,26 @@ for (i in 1:nrow(results)){
   print(i)
 }
 
-results %>%
-  arrange(desc(auc)) %>%
-  head()
+results = results %>%
+  arrange(desc(auc))
+head(results)
 
-ggplot(data = results, aes(x = max.nodes, y = auc)) + geom_point() + geom_line(col = 'red', se= F)
+ggplot(data = results, aes(x = max.nodes, y = auc)) + geom_point() + geom_line(col = 'red')
 ```
 
+##Best Bagged Tree
 ```{r}
+best.depth = results[1,'max.nodes']
 
-```
+final.bag = randomForest(Salary ~ .,
+                         data = Train,
+                         mtry = p,
+                         importance = T,
+                         ntree = 100, 
+                         maxnodes = best.depth)
 
-
-
-```{r}
-posteriors.Bagged = predict(bag.Salary, newdata = test, type = 'prob')
-predic.Bagged = predict(bag.Salary, newdata = test, type = 'class')
+posteriors.Bagged = predict(final.bag, newdata = test, type = 'prob')
+predic.Bagged = predict(final.bag, newdata = test, type = 'class')
 Conf.Bagged = confusionMatrix(test$Salary, predic.Bagged)
 Conf.Bagged
 
@@ -383,55 +387,92 @@ df.Bagged = cbind(posteriors.Bagged[,2], test$Salary)
 preds.Bagged = prediction(df.Bagged[,1], df.Bagged[,2])
 ROC.Bagged = performance(preds.Bagged, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Bagged)
-abline(a = 0, b = 1, lty = 2)
+abline(a=0, b=1, lty=2)
 
 auc.Bagged <-performance(preds.Bagged, measure = 'auc')
-auc.Bagged@y.values
-importance(bag.Salary)
-varImpPlot(bag.Salary)
+auc.Bagged@y.values[[1]]
 ```
 
 ```{r}
-set.seed(29)
-library(ROCR)
-rfModel = tuneRF(Train[,-ncol(Train)], Train[,ncol(Train)], 
-                 stepFactor=1.5,
-                 doBest = TRUE,
-                 improve=1e-5, 
-                 ntree = 500)
-
-summary(rfModel)
-posteriors.rf = predict(rfModel, test, type = 'prob')
-predic.rf = predict(rfModel, newdata = test)
-Conf.rf = confusionMatrix(test$Salary, predic.rf)
-Conf.rf
-df.rf = cbind(posteriors.rf[,2], test$Salary)
-preds.rf = prediction(df.rf[,1], df.rf[,2])
-ROC.rf = performance(preds.rf, measure = 'tpr', x.measure = 'fpr')
-plot(ROC.rf)
-abline(a = 0, b = 1 , lty = 2)
-auc.rf = performance(preds.rf, measure = 'auc')
-auc.rf@y.values
-importance(rfModel)
-varImpPlot(rfModel)
-
+importance(final.bag)
+varImpPlot(final.bag)
 ```
 
-###Tune RF with Caret but takes awhile
+#Random Forest
 ```{r}
-control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
-set.seed(2)
-mtry <- sqrt(ncol(Train[,1:ncol(Train)]))
-rf_random <- train(Salary~., data=Train, method="rf", metric="Accuracy", tuneLength=5, trControl=control)
-print(rf_random)
-plot(rf_random)
+depths = c(2, 50, 100, seq(from = 400, to = 1200, by = 200))
+mtry = c(4,6,8,10,12)
+
+results = expand.grid(max.nodes = depths, nvar = mtry)
+results$auc = 0
+
+for (i in 1:nrow(results)){
+  depth = results[i, 'max.nodes']
+  nvars = results[i, 'nvar']
+
+  forest = randomForest(Salary ~ .,
+                        data = Train,
+                        mtry = nvars,
+                        importance = F,
+                        ntree = 100,
+                        maxnodes = depth)
+  
+  posteriors.Forest = predict(forest, newdata = test, type = 'prob')
+  predic.Forest = predict(forest, newdata = test, type = 'class')
+  df.Forest = cbind(posteriors.Forest[,2], test$Salary)
+  preds.Forest = prediction(df.Forest[,1], df.Forest[,2])
+  ROC.Forest = performance(preds.Forest, measure = 'tpr', x.measure = 'fpr')
+  auc.Forest <-performance(preds.Forest, measure = 'auc')
+  results[i,'auc'] = auc.Forest@y.values[[1]]
+  print(i)
+}
+
+results = results %>%
+  arrange(desc(auc))
+head(results)
 ```
 
 
-###Showing all models on Validation Set
 ```{r}
-posteriors.Validate = predict(rpartTune, Validation, type = 'prob')
-predic.Validate = predict(rfModel, newdata = Validation)
+best.mtry = results[1,'nvar']
+best.depth = results[1, 'max.nodes'] 
+final.forest = randomForest(Salary ~ .,
+                        data = Train,
+                        mtry = best.mtry,
+                        importance = T,
+                        ntree = 100,
+                        maxnodes = best.depth)
+
+posteriors.Forest = predict(final.forest, newdata = test, type = 'prob')
+predic.Forest = predict(final.forest, newdata = test, type = 'class')
+Conf.Forest = confusionMatrix(test$Salary, predic.Forest)
+Conf.Forest
+```
+
+
+```{r}
+df.Forest = cbind(posteriors.Forest[,2], test$Salary)
+preds.Forest = prediction(df.Forest[,1], df.Forest[,2])
+ROC.Forest = performance(preds.Forest, measure = 'tpr', x.measure = 'fpr')
+plot(ROC.Forest)
+abline(a = 0, b = 1, lty = 2)
+
+auc.Forest <-performance(preds.Forest, measure = 'auc')
+auc.Forest@y.values[[1]]
+```
+
+```{r}
+importance(final.forest)
+varImpPlot(final.forest)
+```
+
+
+#Validation
+
+##Classification Tree
+```{r}
+posteriors.Validate = predict(final.tree, Validation, type = 'prob')
+predic.Validate = predict(final.tree, newdata = Validation, type = 'class')
 Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
 Conf.Validate
 df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
@@ -440,12 +481,13 @@ ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Validate)
 abline(a = 0, b = 1 , lty = 2)
 auc.Validate = performance(preds.Validate, measure = 'auc')
-auc.Validate@y.values
+auc.Validate@y.values[[1]]
 ```
 
+##Bagged Forest
 ```{r}
-posteriors.Validate = predict(bag.Salary, Validation, type = 'prob')
-predic.Validate = predict(rfModel, newdata = Validation)
+posteriors.Validate = predict(final.bag, Validation, type = 'prob')
+predic.Validate = predict(final.bag, newdata = Validation, type = 'class')
 Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
 Conf.Validate
 df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
@@ -454,19 +496,31 @@ ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Validate)
 abline(a = 0, b = 1 , lty = 2)
 auc.Validate = performance(preds.Validate, measure = 'auc')
-auc.Validate@y.values
+auc.Validate@y.values[[1]]
 ```
 
+##Random Forest
 ```{r}
-posteriors.Validate = predict(rfModel, Validation, type = 'prob')
-predic.Validate = predict(rfModel, newdata = Validation)
+posteriors.Validate = predict(final.forest, Validation, type = 'prob')
+predic.Validate = predict(final.forest, newdata = Validation, type = 'class')
 Conf.Validate = confusionMatrix(Validation$Salary, predic.Validate)
 Conf.Validate
+
+rf.conf.matrix = Conf.Validate
 df.Validate = cbind(posteriors.Validate[,2], Validation$Salary)
 preds.Validate = prediction(df.Validate[,1], df.Validate[,2])
 ROC.Validate = performance(preds.Validate, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Validate)
 abline(a = 0, b = 1 , lty = 2)
+
 auc.Validate = performance(preds.Validate, measure = 'auc')
-auc.Validate@y.values
+auc.Validate@y.values[[1]]
 ```
+
+##Sensitivity and Specificity
+
+```{r}
+tpr = (conf[2,2]/(conf[2,2]+conf[2,1]))
+tnr = (conf[1,1]/(conf[1,1]+conf[1,2]))
+```
+
