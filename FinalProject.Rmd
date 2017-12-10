@@ -164,6 +164,8 @@ for (var in non_num_vars){
 set.seed(2)
 AllData$EducationNum = NULL
 
+AllData$Salary = factor(ifelse(as.character(AllData$Salary) == '<=50K', 'Yes', 'No'))
+
 Data = AllData[1:nrow(raw_data),]
 Validation = AllData[(nrow(raw_data)+1):nrow(AllData),]
 
@@ -335,26 +337,34 @@ plot(results)
 We can see where the number of trees stops helping the model
 
 ```{r}
-control = trainControl(method = 'repeatedcv', number = 5, repeats = 2, search = 'random')
+depths = c(2, 50, 100, seq(from = 400, to = 2000, by = 200))
 
-grid <- expand.grid(maxdepth = c(1, 5), mfinal = c(1,100))
+results = data.frame(max.nodes = depths, auc = 0)
+for (i in 1:nrow(results)){
+  depth = results[i, 'max.nodes']
 
-bag.Salary = randomForest(Salary~.,
-                          data = Train, 
-                          mtry = p, 
-                          importance = TRUE,
-                          ntree = 25,
-                          )
-metric = 'Accuracy'
-ntrees = 25
-tunegrid = expand.grid(.ntrees=ntrees)
+  forest = randomForest(Salary ~ .,
+                        data = Train,
+                        mtry = p,
+                        importance = F,
+                        ntree = 100,
+                        maxnodes = depth)
+  
+  posteriors.Bagged = predict(forest, newdata = test, type = 'prob')
+  predic.Bagged = predict(forest, newdata = test, type = 'class')
+  df.Bagged = cbind(posteriors.Bagged[,2], test$Salary)
+  preds.Bagged = prediction(df.Bagged[,1], df.Bagged[,2])
+  ROC.Bagged = performance(preds.Bagged, measure = 'tpr', x.measure = 'fpr')
+  auc.Bagged <-performance(preds.Bagged, measure = 'auc')
+  results[i,'auc'] = auc.Bagged@y.values[[1]]
+  print(i)
+}
 
-bag.Salary = train(Salary~.,
-                   method = 'Adabag',
-                   metric = 'ROC',
-                   data = Train,
-                   trControl = control,
-                   tuneGrid = grid)
+results %>%
+  arrange(desc(auc)) %>%
+  head()
+
+ggplot(data = results, aes(x = max.nodes, y = auc)) + geom_point() + geom_line(col = 'red', se= F)
 ```
 
 ```{r}
