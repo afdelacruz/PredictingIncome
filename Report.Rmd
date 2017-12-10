@@ -1,0 +1,14 @@
+---
+title: "Report"
+author: "Landon Kleinbrodt and Andrew de la Cruz"
+date: "12/10/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Introduction
+
+*Can a classification model built on census data predict whether an individual's yearly income exceeds $50k?*

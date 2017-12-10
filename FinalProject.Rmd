@@ -20,19 +20,6 @@ library(ipred)
 library(randomForest)
 ```
 
-DATA PREPROCESSING TODO LIST:
--Load data in 
--Create column names 
--Convert everything to correct data types (factors, numeric)
--Check for complete samples
--Check for outliers
--Create dummy variables
--Correlations
--Plots
--Summary Stats
-
-
-
 ###Loading Data
 ```{r}
 raw_data = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
@@ -45,16 +32,39 @@ test_set$V15 = str_replace(test_set$V15, "\\.", "")
 
 AllData = rbind(raw_data, test_set)
 
-column_names = c("age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MartialStatus", "Occupation",
+column_names = c("age", "WorkClass", "FNLWGT", "Education", "EducationNum", "MaritalStatus", "Occupation",
           "Relationship", "Race", "Sex", "CapitalGain", "CapitalLoss", "HoursWeek", 
           "NativeCountry", "Salary")
 colnames(AllData) = column_names
 
 ColClasses = sapply(AllData, class)
 
-char_vars = names(AllData)[ColClasses=='character']
+```
 
-#Removing empty space at start, replacing ? with na
+#Exploratory Data Analysis
+
+##Missing Values
+```{r}
+#Removing empty space at start, replacing ? with unknown
+char_vars = names(AllData)[ColClasses=='character']
+for (var in char_vars){
+  AllData[,var] = str_trim(AllData[,var])
+  AllData[AllData[,var]=='?', var] = 'Unknown'
+  AllData[,var] = factor(AllData[,var])
+}
+
+nas = AllData %>%
+  filter(Occupation =="Unknown")
+summary(nas)
+```
+
+Missing values:
+  The majority of missing values come from the Occupation and WorkingClass columns. There is almost a complete overlap between those without information on occupation and those without info on working class. The only other column with missing values is `NativeCountry`. 
+  
+By comparing summary statistics for those with missing values, we can see that the distribution of the other statistics does not vary greatly between those with missing values and those without. (Slight changes in Education, Marital Status) However, we notice that 90% of people with missing values make less than 50k `Salary` as compared to the base rate of 76% in the general population. 
+
+```{r}
+#Removing empty space at start, replacing ? with unknown
 for (var in char_vars){
   AllData[,var] = str_trim(AllData[,var])
   AllData[AllData[,var]=='?', var] = 'Unknown'
@@ -62,27 +72,8 @@ for (var in char_vars){
 }
 ```
 
-#Exploratory Data Analysis
-
-##Missing Values
-```{r}
-summary(AllData)
-
-nas = AllData %>%
-  filter(Occupation == 'Unknown')
-summary(nas)
-```
-
-Missing values:
-  The majority of missing values come from the Occupation and WorkingClass columns. There is almost a complete overlap between those without information on occupation and those without info on working class. The only other column with missing values is `NativeCountry`. 
-  
-By comparing summary statistics for those with missing values, we can see that the distribution of the other statistics does not vary greatly between those with missing values and those without. (Slight changes in Education, Marital Status) However, we notice that 90% of people with missing values make less than 50k `Salary` as compared to the base rate of 76% in the general population.
- 
-```{r}
-AllData[is.na(AllData$Occupation), 'Occupation'] = 'Unknown'
-```
-
 ##Outliers
+See binning. 
 
 ##Binning
 ```{r}
@@ -157,9 +148,8 @@ for (var in non_num_vars){
 ```{r}
 ```
 
-#Association between predictor and response
 
-##Split Data
+##Splitting Data
 ```{r}
 set.seed(2)
 AllData$EducationNum = NULL
@@ -292,7 +282,7 @@ ROC.Tree = performance(preds.Tree, measure = 'tpr', x.measure = 'fpr')
 plot(ROC.Tree)
 abline(a = 0, b = 1 , lty = 2)
 auc.Tree = performance(preds.Tree, measure = 'auc')
-auc.Tree@y.values
+auc.Tree@y.values[[1]]
 ```
 
 
