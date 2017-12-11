@@ -315,7 +315,6 @@ for (i in 1:length(all.trees)){
   ROC.Bagged = performance(preds.Bagged, measure = 'tpr', x.measure = 'fpr')
   auc.Bagged <-performance(preds.Bagged, measure = 'auc')
   results[i,'auc'] = auc.Bagged@y.values[[1]]
-  print(i)
 }
 
 plot(results)
@@ -387,7 +386,7 @@ varImpPlot(final.bag)
 
 #Random Forest
 ```{r}
-depths = c(2, 50, 100, seq(from = 400, to = 1200, by = 200))
+depths = c(2, 50, 100, seq(from = 400, to = 2400, by = 400))
 mtry = c(4,6,8,10,12)
 
 results = expand.grid(max.nodes = depths, nvar = mtry)
@@ -510,4 +509,13 @@ auc.Validate@y.values[[1]]
 tpr = (conf[2,2]/(conf[2,2]+conf[2,1]))
 tnr = (conf[1,1]/(conf[1,1]+conf[1,2]))
 ```
+
+
+
+```{r}
+
+
+```
+
+
 
